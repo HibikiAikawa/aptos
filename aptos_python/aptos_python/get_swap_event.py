@@ -6,11 +6,11 @@ import requests
 aux_address = "0xbd35135844473187163ca197ca93b2ab014370587bb0ed3befff9e902d6bb541"
 usdc_module = "0x5e156f1207d0ebfa19a9eeff00d62a282278fb8719f4fab3a586a0a2c0fffbea::coin::T"
 apt_module = "0x1::aptos_coin::AptosCoin"
-event_handle = f'{aux_address}::amm::Pool<{apt_module}, {usdc_module}>'
+event_handle = f'{aux_address}::amm::Pool<{apt_module},{usdc_module}>'
 field_name = 'swap_events'
 
 # https://fullnode.devnet.aptoslabs.com/v1/accounts/{address}/events/{event_handle}/{field_name}
-rest_api_url = f'https://fullnode.devnet.aptoslabs.com/v1/accounts/{aux_address}/events/{event_handle}/{field_name}'
+rest_api_url = f'https://fullnode.mainnet.aptoslabs.com/v1/accounts/{aux_address}/events/{event_handle}/{field_name}'
 
 
 def from_octa(amount, decimals):
