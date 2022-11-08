@@ -1,11 +1,7 @@
 # devnet用のフェイクコインを自身のリソースに登録&ミントする
 import os
-import time
-import json
 
 import yaml
-import requests
-from dotenv import load_dotenv
 
 from aptos_sdk.account import Account
 from aptos_sdk.account_address import AccountAddress
@@ -18,7 +14,7 @@ from aptos_sdk.transactions import (
 )
 
 from aptos_sdk.bcs import Serializer
-from aptos_sdk.type_tag import StructTag, TypeTag, AccountAddressTag
+from aptos_sdk.type_tag import StructTag, TypeTag
 
 
 with open('../.aptos/config.yaml', 'r') as f:

@@ -1,15 +1,11 @@
 # 現在のプールのステーク状況をチェック(devnetだとまともに動いているのがない)
 import os
-import time
-import json
 
 import yaml
-import requests
-from dotenv import load_dotenv
 
 from aptos_sdk.account import Account
 from aptos_sdk.account_address import AccountAddress
-from aptos_sdk.client import FaucetClient, RestClient
+from aptos_sdk.client import RestClient
 from aptos_sdk import ed25519
 
 
