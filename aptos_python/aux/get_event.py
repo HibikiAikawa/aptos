@@ -12,7 +12,7 @@ from aptos_sdk import ed25519
 
 with open('aux/rate_history.csv', 'w') as f:
     writer = csv.writer(f)
-    writer.writerow(['rate', 'version', 'sequence_number'])
+    writer.writerow(['event', 'rate', 'apt_reserve', 'usdc_reserve', 'version'])
 
 with open('../.aptos/config.yaml', 'r') as f:
     config = yaml.safe_load(f)
@@ -79,17 +79,10 @@ response = client.account_resource(aux_account, RESOURCE_NAME)
 apt_reserve = int(response['data']['x_reserve']['value'])
 usdc_reserve = int(response['data']['y_reserve']['value'])
 
-#########
 response_swap = client.get_event(aux_account, RESOURCE_NAME, 'swap_events')
 response_addliq = client.get_event(aux_account, RESOURCE_NAME, 'add_liquidity_events')
 response_remliq = client.get_event(aux_account, RESOURCE_NAME, 'remove_liquidity_events')
-'''
-import json
-print(json.dumps(response_swap[-1],indent=2))
-print(json.dumps(response_addliq[-1],indent=2))
-print(json.dumps(response_remliq[-1],indent=2))
-exit()
-'''
+
 
 sn_swap_pre = response_swap[-1]['sequence_number']
 sn_addliq_pre = response_addliq[-1]['sequence_number']
@@ -106,7 +99,7 @@ while True:
         num = int(sequence_number) - int(sn_swap_pre)
         responses.extend(response[-num:])
         sn_swap_pre = sequence_number
-
+    
     # add liquidity
     response = client.get_event(aux_account, RESOURCE_NAME, 'add_liquidity_events')
     sequence_number = response[-1]['sequence_number']
@@ -126,51 +119,34 @@ while True:
     # 全イベントを合わせてversion順にソート
     responses = sorted(responses, key=lambda x: x['version'])
 
-    for res in responses:
-        type = res['type']
-        version = res['version']
-        if 'SwapEvent' in type:
-            apt_amount, usdc_amount, apt_reserve, usdc_reserve, version = get_pool_info(res)
-        elif 'AddLiquidityEvent' in type:
-            apt_amount = int(res['data']["x_added_au"])
-            usdc_amount = int(res['data']["y_added_au"])
-        elif 'RemoveLiquidityEvent' in type:
-            apt_amount = (-1) * int(res['data']["x_removed_au"])
-            usdc_amount = (-1) * int(res['data']["y_removed_au"])
-        apt_reserve += apt_amount
-        usdc_reserve += usdc_amount
-        rate = calc_rate(apt_reserve, usdc_reserve, 0.9990)
-        print(f'rate: {rate:.04f} USDC apt_reserve: {apt_reserve} usdc_reserve: {usdc_reserve} version: {version}')
-
-    # test用
-    response = client.account_resource(aux_account, RESOURCE_NAME)
-    apt_reserve_test = int(response['data']['x_reserve']['value'])
-    usdc_reserve_test = int(response['data']['y_reserve']['value'])
-    if ((apt_reserve_test != apt_reserve) or (usdc_reserve_test != usdc_reserve)):
-        raise ValueError()
-
-    time.sleep(5)
-
-#########
-response = client.get_event(aux_account, RESOURCE_NAME, 'swap')
-sequence_number_pre = response[-1]['sequence_number']
-while True:
-    response = client.get_event(aux_account, RESOURCE_NAME, FIELD_NAME)
-    sequence_number = response[-1]['sequence_number']
-    if (int(sequence_number) > int(sequence_number_pre)):
-        num = int(sequence_number) - int(sequence_number_pre)
-
-        for i in range(-1 * num, 0, 1):
-            apt_amount, usdc_amount, apt_reserve, usdc_reserve, sequence_number, version = get_pool_info(response, i)
+    if (len(responses) > 0):
+        for res in responses:
+            type = res['type']
+            version = res['version']
+            event = ''
+            if 'SwapEvent' in type:
+                apt_amount, usdc_amount, apt_reserve, usdc_reserve, version = get_pool_info(res)
+                event = 'swap'
+            elif 'AddLiquidityEvent' in type:
+                apt_amount = int(res['data']["x_added_au"])
+                usdc_amount = int(res['data']["y_added_au"])
+                event = 'add_liquidity'
+            elif 'RemoveLiquidityEvent' in type:
+                apt_amount = (-1) * int(res['data']["x_removed_au"])
+                usdc_amount = (-1) * int(res['data']["y_removed_au"])
+                event = 'remove_liquidity'
             apt_reserve += apt_amount
             usdc_reserve += usdc_amount
-            apt_reserve = from_octa(apt_reserve, 8)
-            usdc_reserve = from_octa(usdc_reserve, 6)
-            rate = usdc_reserve * 0.9990 / apt_reserve
+            rate = calc_rate(apt_reserve, usdc_reserve, 0.9990)
+            print(f'event: {event} rate: {rate:.04f} USDC apt_reserve: {apt_reserve} usdc_reserve: {usdc_reserve} version: {version}')
             with open('aux/rate_history.csv', 'a') as f:
                 writer = csv.writer(f)
-                writer.writerow([rate, version, sequence_number])
-            print(f'apt {rate:.04f} USDC version: {version} sequence_number: {sequence_number}')
+                writer.writerow([event, rate, apt_reserve, usdc_reserve, version])
 
-        sequence_number_pre = sequence_number
+        # test用
+        response = client.account_resource(aux_account, RESOURCE_NAME)
+        apt_reserve_latest = int(response['data']['x_reserve']['value'])
+        usdc_reserve_latest = int(response['data']['y_reserve']['value'])
+        print('apt reserve diff:', apt_reserve_latest-apt_reserve, 'usdc reserve diff:', usdc_reserve_latest-usdc_reserve)
+
     time.sleep(5)

@@ -12,7 +12,7 @@ from aptos_sdk import ed25519
 
 with open('pancake/rate_history.csv', 'w') as f:
     writer = csv.writer(f)
-    writer.writerow(['rate', 'version'])
+    writer.writerow(['event', 'rate', 'apt_reserve', 'usdc_reserve', 'version'])
 
 with open('../.aptos/config.yaml', 'r') as f:
     config = yaml.safe_load(f)
@@ -104,36 +104,42 @@ while True:
     # 全イベントを合わせてversion順にソート
     responses = sorted(responses, key=lambda x: x['version'])
 
-    for res in responses:
-        type = res['type']
-        version = res['version']
-        if 'SwapEvent' in type:
-            amount_x_in = res['data']["amount_x_in"]
-            amount_x_out = res['data']["amount_x_out"]
-            amount_y_in = res['data']["amount_y_in"]
-            amount_y_out = res['data']["amount_y_out"]
-            if amount_x_in == '0':
-                apt_amount = (-1) * int(amount_x_out)
-                usdc_amount = int(amount_y_in)
-            else:
-                apt_amount = int(amount_x_in)
-                usdc_amount = (-1) * int(amount_y_out)
-        elif 'AddLiquidityEvent' in type:
-            apt_amount = int(res['data']["amount_x"])
-            usdc_amount = int(res['data']["amount_y"])
-        elif 'RemoveLiquidityEvent' in type:
-            apt_amount = (-1) * int(res['data']["amount_x"])
-            usdc_amount = (-1) * int(res['data']["amount_y"])
-        apt_reserve += apt_amount
-        usdc_reserve += usdc_amount
-        rate = calc_rate(apt_reserve, usdc_reserve, 0.9975)
-        print(f'rate: {rate:.04f} USDC apt_reserve: {apt_reserve} usdc_reserve: {usdc_reserve} version: {version}')
+    if (len(responses) > 0):
+        for res in responses:
+            type = res['type']
+            version = res['version']
+            if 'SwapEvent' in type:
+                amount_x_in = res['data']["amount_x_in"]
+                amount_x_out = res['data']["amount_x_out"]
+                amount_y_in = res['data']["amount_y_in"]
+                amount_y_out = res['data']["amount_y_out"]
+                if amount_x_in == '0':
+                    apt_amount = (-1) * int(amount_x_out)
+                    usdc_amount = int(amount_y_in)
+                else:
+                    apt_amount = int(amount_x_in)
+                    usdc_amount = (-1) * int(amount_y_out)
+                event = 'swap'
+            elif 'AddLiquidityEvent' in type:
+                apt_amount = int(res['data']["amount_x"])
+                usdc_amount = int(res['data']["amount_y"])
+                event = 'add_liquidity'
+            elif 'RemoveLiquidityEvent' in type:
+                apt_amount = (-1) * int(res['data']["amount_x"])
+                usdc_amount = (-1) * int(res['data']["amount_y"])
+                event = 'remove_liquidity'
+            apt_reserve += apt_amount
+            usdc_reserve += usdc_amount
+            rate = calc_rate(apt_reserve, usdc_reserve, 0.9975)
+            print(f'event: {event} rate: {rate:.04f} USDC apt_reserve: {apt_reserve} usdc_reserve: {usdc_reserve} version: {version}')
+            with open('pancake/rate_history.csv', 'a') as f:
+                writer = csv.writer(f)
+                writer.writerow([event, rate, apt_reserve, usdc_reserve, version])
 
-    # test用
-    response = client.account_resource(pancake_account, RESOURCE_NAME)
-    apt_reserve_test = int(response['data']['reserve_x'])
-    usdc_reserve_test = int(response['data']['reserve_y'])
-    if ((apt_reserve_test != apt_reserve) or (usdc_reserve_test != usdc_reserve)):
-        raise ValueError()
+        # test用
+        response = client.account_resource(pancake_account, RESOURCE_NAME)
+        apt_reserve_latest = int(response['data']['reserve_x'])
+        usdc_reserve_latest = int(response['data']['reserve_y'])
+        print('apt reserve diff:', apt_reserve_latest-apt_reserve, 'usdc reserve diff:', usdc_reserve_latest-usdc_reserve)
 
     time.sleep(5)
