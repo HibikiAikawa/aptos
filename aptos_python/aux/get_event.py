@@ -10,9 +10,10 @@ from aptos_sdk.client import RestClient
 from aptos_sdk import ed25519
 
 
-with open('aux/rate_history.csv', 'w') as f:
-    writer = csv.writer(f)
-    writer.writerow(['event', 'rate', 'apt_reserve', 'usdc_reserve', 'version'])
+if not (os.path.isfile('aux/rate_history.csv')):
+    with open('aux/rate_history.csv', 'w') as f:
+        writer = csv.writer(f)
+        writer.writerow(['event', 'rate', 'apt_reserve', 'usdc_reserve', 'version'])
 
 with open('../.aptos/config.yaml', 'r') as f:
     config = yaml.safe_load(f)
