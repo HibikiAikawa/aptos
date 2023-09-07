@@ -1,20 +1,14 @@
 import os
 import time
 import csv
+from pprint import pprint
 
+import pandas as pd
+from tqdm import tqdm
 import yaml
-
-from aptos_sdk.account import Account
-from aptos_sdk.account_address import AccountAddress
 from aptos_sdk.client import RestClient
-from aptos_sdk import ed25519
 
-if not (os.path.isfile('pancake/rate_history.csv')):
-    with open('pancake/rate_history.csv', 'w') as f:
-        writer = csv.writer(f)
-        writer.writerow(['event', 'rate', 'apt_reserve', 'usdc_reserve', 'version'])
-
-with open('../.aptos/config.yaml', 'r') as f:
+with open('.aptos/config.yaml', 'r') as f:
     config = yaml.safe_load(f)
 
 PRIVATE_KEY = config['profiles']['mainnet']['private_key']
@@ -23,123 +17,82 @@ PANCAKE_ADDRESS = '0xc7efb4076dbe143cbcd98cfaaa929ecfc8f299203dfff63b95ccb6bfe19
 
 APT_COIN = '0x1::aptos_coin::AptosCoin'
 USDC_COIN = '0xf22bede237a07e121b56d91a491eb7bcdfd1f5907926a9e58338f964a01b17fa::asset::USDC'
-RESOURCE_NAME = f'{PANCAKE_ADDRESS}::swap::TokenPairReserve<{APT_COIN}, {USDC_COIN}>'
 EVENT_NAME = f'{PANCAKE_ADDRESS}::swap::PairEventHolder<{APT_COIN}, {USDC_COIN}>'
-FIELD_NAME = 'swap'
+LIMIT = 100
 
 
 class wrappedRestClient(RestClient):
     def __init__(self, url) -> None:
         super().__init__(url)
 
-    def get_event(self, address: AccountAddress, event_handle, field_name):
+    def get_event(self, address, event_handle, field_name, params=None):
         # https://fullnode.devnet.aptoslabs.com/v1/accounts/{address}/events/{event_handle}/{field_name}
-        response = self.client.get(os.path.join(self.base_url, 'accounts', str(address), 'events', event_handle, field_name))
+        uri = os.path.join('https://aptos-mainnet-archive.allthatnode.com/v1', 'accounts', str(address), 'events', event_handle, field_name)
+        response = self.client.get(uri, params=params)
         return response.json()
 
 
-def from_octa(amount, decimals):
-    if isinstance(amount, str):
-        amount = int(amount)
-    return amount / 10**decimals
-
-
-def calc_rate(apt_reserve, usdc_reserve, fee):
-    apt_reserve = from_octa(apt_reserve, 8)
-    usdc_reserve = from_octa(usdc_reserve, 6)
-    return usdc_reserve*fee/apt_reserve
-
-
-# client作成
-private_key = ed25519.PrivateKey.from_hex(PRIVATE_KEY)
-my_account = Account(
-    account_address=AccountAddress.from_key(private_key.public_key()),
-    private_key=private_key,
-)
 client = wrappedRestClient(NODE_URL)
-pancake_account = AccountAddress.from_hex(PANCAKE_ADDRESS)
-
-# 初期流動性のチェック
-response = client.account_resource(pancake_account, RESOURCE_NAME)
-apt_reserve = int(response['data']['reserve_x'])
-usdc_reserve = int(response['data']['reserve_y'])
 
 
-response_swap = client.get_event(pancake_account, EVENT_NAME, 'swap')
-response_addliq = client.get_event(pancake_account, EVENT_NAME, 'add_liquidity')
-response_remliq = client.get_event(pancake_account, EVENT_NAME, 'remove_liquidity')
+def preprocessing_dict(response):
+    ret = {}
+    for name in response:
+        if isinstance(response[name], dict):
+            ret.update(**response[name])
+        else:
+            ret.update({name: response[name]})
 
-sn_swap_pre = response_swap[-1]['sequence_number']
-sn_addliq_pre = response_addliq[-1]['sequence_number']
-sn_remliq_pre = response_remliq[-1]['sequence_number']
+    return ret
 
 
-while True:
-    responses = []
+def append_dict(responses):
+    _list = []
+    for response in responses:
+        d = preprocessing_dict(response)
+        _list.append(d)
+    return _list
 
-    # swap
-    response = client.get_event(pancake_account, EVENT_NAME, 'swap')
-    sequence_number = response[-1]['sequence_number']
-    if (int(sequence_number) > int(sn_swap_pre)):
-        num = int(sequence_number) - int(sn_swap_pre)
-        responses.extend(response[-num:])
-        sn_swap_pre = sequence_number
 
-    # add liquidity
-    response = client.get_event(pancake_account, EVENT_NAME, 'add_liquidity')
-    sequence_number = response[-1]['sequence_number']
-    if (int(sequence_number) > int(sn_addliq_pre)):
-        num = int(sequence_number) - int(sn_addliq_pre)
-        responses.extend(response[-num:])
-        sn_addliq_pre = sequence_number
+# response_swap = client.get_event(PANCAKE_ADDRESS, EVENT_NAME, 'swap', params)
+# response_addliq = client.get_event(PANCAKE_ADDRESS, EVENT_NAME, 'add_liquidity', params)
 
-    # remove liquidity
-    response = client.get_event(pancake_account, EVENT_NAME, 'remove_liquidity')
-    sequence_number = response[-1]['sequence_number']
-    if (int(sequence_number) > int(sn_remliq_pre)):
-        num = int(sequence_number) - int(sn_remliq_pre)
-        responses.extend(response[-num:])
-        sn_remliq_pre = sequence_number
+def create_event_df(address, event_name, filter):
+    start = 1
+    _r = client.get_event(address, event_name, filter, {'limit':1})
+    max_sequence_number = _r[-1]['sequence_number']
+    all_list = []
+    df = pd.DataFrame()
+    with tqdm() as pbar:
+        while True:
+            params = {'start': start, 'limit': LIMIT}
+            responses = client.get_event(address, event_name, filter, params)
+            sequence_number = responses[-1]['sequence_number']
+            start = int(sequence_number) + 1
+            _list = append_dict(responses)
+            all_list.extend(_list)
+            if int(max_sequence_number) - int(sequence_number) <= 0:
+                break
+            pbar.update(1)
+            time.sleep(0.1)
+    
+    df = pd.DataFrame.from_dict(all_list)
+    return df
 
-    # 全イベントを合わせてversion順にソート
-    responses = sorted(responses, key=lambda x: x['version'])
 
-    if (len(responses) > 0):
-        for res in responses:
-            type = res['type']
-            version = res['version']
-            if 'SwapEvent' in type:
-                amount_x_in = res['data']["amount_x_in"]
-                amount_x_out = res['data']["amount_x_out"]
-                amount_y_in = res['data']["amount_y_in"]
-                amount_y_out = res['data']["amount_y_out"]
-                if amount_x_in == '0':
-                    apt_amount = (-1) * int(amount_x_out)
-                    usdc_amount = int(amount_y_in)
-                else:
-                    apt_amount = int(amount_x_in)
-                    usdc_amount = (-1) * int(amount_y_out)
-                event = 'swap'
-            elif 'AddLiquidityEvent' in type:
-                apt_amount = int(res['data']["amount_x"])
-                usdc_amount = int(res['data']["amount_y"])
-                event = 'add_liquidity'
-            elif 'RemoveLiquidityEvent' in type:
-                apt_amount = (-1) * int(res['data']["amount_x"])
-                usdc_amount = (-1) * int(res['data']["amount_y"])
-                event = 'remove_liquidity'
-            apt_reserve += apt_amount
-            usdc_reserve += usdc_amount
-            rate = calc_rate(apt_reserve, usdc_reserve, 0.9975)
-            print(f'event: {event} rate: {rate:.04f} USDC apt_reserve: {apt_reserve} usdc_reserve: {usdc_reserve} version: {version}')
-            with open('pancake/rate_history.csv', 'a') as f:
-                writer = csv.writer(f)
-                writer.writerow([event, rate, apt_reserve, usdc_reserve, version])
+# event_pair_created = f'{PANCAKE_ADDRESS}::swap::SwapInfo'
+# print('collecting pair create event')
+# pair_df = create_event_df(PANCAKE_ADDRESS, event_pair_created, 'pair_created')
+# pair_df.to_csv('data/pancakeswap/pancakeswap_pair_log.csv')
 
-        # test用
-        response = client.account_resource(pancake_account, RESOURCE_NAME)
-        apt_reserve_latest = int(response['data']['reserve_x'])
-        usdc_reserve_latest = int(response['data']['reserve_y'])
-        print('apt reserve diff:', apt_reserve_latest-apt_reserve, 'usdc reserve diff:', usdc_reserve_latest-usdc_reserve)
+print('collecting burn log')
+burn_df = create_event_df(PANCAKE_ADDRESS, EVENT_NAME, 'remove_liquidity')
+burn_df.to_csv('data/burn_log.csv')
 
-    time.sleep(5)
+print('collecting mint log')
+burn_df = create_event_df(PANCAKE_ADDRESS, EVENT_NAME, 'add_liquidity')
+burn_df.to_csv('data/mint_log.csv')
+
+print('collecting swap log')
+burn_df = create_event_df(PANCAKE_ADDRESS, EVENT_NAME, 'swap')
+burn_df.to_csv('data/swap_log.csv')
